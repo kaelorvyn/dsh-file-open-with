@@ -16,6 +16,19 @@
 图标来源：一级菜单用平台原语自带的 Fluent 图标（与 DSH 自身菜单同款；`primitives` 不可用时降级为无图标）；
 「打开方式」的应用图标由宿主用 `System.Drawing` 从 exe 抽出 PNG、缓存为 data URL（抽不到则回退通用图标）。
 
+## 网页链接菜单
+
+右键正文里的 http(s) 链接（Markdown 链接、内联代码里的 URL）弹三项菜单：
+
+| 菜单项 | 图标 | 行为 |
+| --- | --- | --- |
+| 打开网页 | 地球 | 在 **DSH 内置网页视图**里打开（`dsh-builtin-browser` 的 `ctx.browser`）；内置视图不可用或启动失败时自动改用外部浏览器 |
+| 在外部浏览器中打开 | 外开箭头 | **Edge 优先**（Program Files / Program Files (x86) 下的 `msedge.exe`），系统里没有 Edge 就用默认浏览器（`rundll32 url.dll,FileProtocolHandler`） |
+| 复制链接 | 链接 | 链接进剪贴板 |
+
+只认 `http:` / `https:` 绝对 URL：`mailto:`、相对链接一律放行原生右键；宿主侧再校验一次协议，
+`file:` / `javascript:` 直接 400 `bad-url`——不把任意字符串交给系统执行。
+
 右键命中范围（其它区域一律保留原生右键菜单）：
 
 | 来源 | 选择器 | 路径来源 |
@@ -25,6 +38,7 @@
 | `dsh-better-sidebar` 接管后的产物 chip | `button[class*="producedChip"][title]` | `title` |
 | `dsh-files-native` 的附件 chip | `button.fr-chip[title]` | `title` |
 | 思考/工具行里的文件链接（读取·写入·编辑） | `button[class*="fileLink"]` | 按钮文本（cwd 相对或绝对，无截断） |
+| 正文里的网页链接 | `a[href^="http://"]`、`a[href^="https://"]` | `href`（弹三项链接菜单，见上） |
 
 工具行按钮没有 `title`，但它的可见文本就是路径——官方只做「去掉 cwd 前缀」处理，
 不截断、Windows 下也不缩成 `~`，所以相对路径按会话 cwd 还原；URL 文本不当作路径。
@@ -53,9 +67,9 @@ New-Item -ItemType Junction `
 
 | 脚本 | 覆盖 |
 | --- | --- |
-| `host-test.mjs` | 假 ctx 挂载真实 `lib/index.js`：28 项，含 403 栅栏、盘符相对/相对路径解析、1 MB 与 NUL 二进制边界、`content-disposition`、**每个应用都带真实 exe 图标 data URL**、真实 reveal 与终端启动各一次、**带空格路径 reveal 真的选中且窗口可见未最小化（`Shell.Application` + Win32 判定）**、disposer 拆除 |
-| `client-test.mjs` | 无头 Edge 加载真实 `lib/client.js`：33 项，含右键命中与放行、**工具行 fileLink 相对/绝对路径还原**、URL 文本不接管、**一级菜单六项都带图标、子菜单显示应用图标并回退**、中英文条目、子菜单置灰、动作载荷、剪贴板、下载、Escape、primitives 与自绘两种菜单 |
-| `live-gui-test.mjs` | 隔离 `DSH_HOME`（`~/.dsh-verify`）真启动 profile（bundles 挂载）→ 打开它自己的 Web GUI：22 项，含 boot 清单、宿主路由、真实平台 Menu 的条目/顺序/子菜单、**真实菜单 6 个平台图标 + 子菜单 3 个真实应用图标**、**工具行链接弹同一菜单、带空格路径真的被选中且窗口可见**、普通右键不接管 |
+| `host-test.mjs` | 假 ctx 挂载真实 `lib/index.js`：33 项，含 403 栅栏、盘符相对/相对路径解析、1 MB 与 NUL 二进制边界、`content-disposition`、**每个应用都带真实 exe 图标 data URL**、真实 reveal 与终端启动各一次、**带空格路径 reveal 真的选中且窗口可见未最小化（`Shell.Application` + Win32 判定）**、**网页动作的协议白名单与 Edge 优先（真开一个标签页）**、disposer 拆除 |
+| `client-test.mjs` | 无头 Edge 加载真实 `lib/client.js`：47 项，含右键命中与放行、**工具行 fileLink 相对/绝对路径还原**、**链接菜单三项/图标/剪贴板/网页动作载荷/内置视图退回提示/mailto 与相对链接不接管**、**一级菜单六项都带图标、子菜单显示应用图标并回退**、中英文条目、子菜单置灰、剪贴板、下载、Escape、primitives 与自绘两种菜单 |
+| `live-gui-test.mjs` | 隔离 `DSH_HOME`（`~/.dsh-verify`）真启动 profile（bundles 挂载 `dsh-builtin-browser`）→ 打开它自己的 Web GUI：26 项，含 boot 清单、宿主路由、真实平台 Menu 的条目/顺序/子菜单、**真实菜单 6 个平台图标 + 子菜单 3 个真实应用图标**、**工具行链接弹同一菜单、带空格路径真的被选中且窗口可见**、**链接菜单三项/图标/复制链接/「打开网页」真的走内置网页视图**、普通右键不接管 |
 | `probe-reveal.mjs` / `probe-visibility.mjs` / `probe-live.mjs` | 定位工具：分别探测 `explorer.exe /select` 的 argv 形态、`windowsHide` 对窗口可见性的影响、运行中的宿主是否已加载新代码 |
 
 ```powershell
@@ -79,6 +93,8 @@ Origin 同源、非 cross-site），否则一律 403——DSH 不为插件路由
 | `POST /reveal` | `{path, sessionId?}` | `explorer.exe /select,<path>` |
 | `POST /open-with` | `{appId, path, sessionId?}` | 用指定应用打开（argv 数组，无 shell） |
 | `POST /text` | `{path, sessionId?}` | 文本内容，1 MB 上限、含 NUL 视为二进制 |
+| `POST /webview` | `{url}` | 「打开网页」：`ctx.browser`（`dsh-builtin-browser`）开内置网页视图；不可用则退回外部浏览器，返回 `{browser:"builtin"\|"edge"\|"default"}` |
+| `POST /open-external` | `{url}` | 「在外部浏览器中打开」：Edge 优先，其次系统默认浏览器 |
 | `GET /download` | `?path=&sessionId=` | 附件流下载（「另存为」用） |
 
 相对路径按 `sessionId` 对应会话的 cwd 解析；绝对路径原样使用；`C:foo` 这类盘符
@@ -86,16 +102,20 @@ Origin 同源、非 cross-site），否则一律 403——DSH 不为插件路由
 
 ## 已知限制
 
-- **仅 Windows**：`/reveal` 与 `/open-with` 在非 Windows 宿主返回 409，菜单项仍会显示。
+- **仅 Windows**：`/reveal`、`/open-with`、`/webview`、`/open-external` 在非 Windows 宿主返回 409，菜单项仍会显示。
 - **另存为**不是原生保存对话框：DSH 没有向插件暴露系统的保存面板，这里走下载流。
 - 侧边栏文件树的右键菜单属于 `dsh-better-sidebar`，本插件不介入。
 - 工具行文件链接靠按钮文本取路径；若官方将来改为截断显示，需要改成从折叠行体里的参数 JSON 取。
+- **「打开网页」依赖 `dsh-builtin-browser` 能起 Electron**：该插件只在 profile 的
+  `node_modules/electron/dist/` 或 `$DSH_HOME/profiles/node_modules` 找二进制（不看 `$DSH_HOME/electron`）。
+  本机把 `~/.dsh/electron`（裸 Electron 发行版）junction 到
+  `~/.dsh/profiles/desktop/node_modules/electron/dist` 即可；找不到就自动退回外部浏览器，功能不丢。
 
 ## 结构
 
 ```
 cordis.patch.yml   宿主行（insert file-open-with）
-lib/index.js       宿主半部：路由 + 栅栏 + 应用解析 + argv spawn
+lib/index.js       宿主半部：路由 + 栅栏 + 应用/图标解析 + argv spawn
 lib/client.js      浏览器半部：contextmenu 捕获 + 菜单 + 动作分发
 .verify/           可复跑的四层验证脚本与其产物（不随包发布）
 ```
@@ -124,4 +144,6 @@ lib/client.js      浏览器半部：contextmenu 捕获 + 菜单 + 动作分发
 - **应用图标从 exe 抽**：`System.Drawing.Icon::ExtractAssociatedIcon` 抽一次落盘缓存（键含 exe 路径，
   换版本自动失效）。注意 `Bitmap.Save` 到不存在的目录会抛 GDI+ 通用错误，**先建目录**。
 - **宿主只 spawn 固定可执行文件**，文件路径是唯一变量且始终是一个 argv 元素，没有 shell 字符串。
+- **URL 只走 `http:` / `https:`**：客户端按协议前缀认链接，宿主再 `new URL()` 校验一次协议后
+  才交给浏览器或系统；`file:` / `javascript:` 这类能落到系统执行的 scheme 直接拒绝。
 

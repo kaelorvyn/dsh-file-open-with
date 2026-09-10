@@ -24,7 +24,8 @@ function check(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
 
-const seen = { apps: 0, reveal: [], openWith: [], text: [], download: [] }
+const seen = { apps: 0, reveal: [], openWith: [], text: [], download: [], webview: [], openExternal: [] }
+let noBrowser = false
 /** 台架把「哪个应用不可用」做成页级状态，便于同时验证「置灰」和「宿主 409」两条路径。 */
 let currentMissing = 'idea'
 
@@ -49,6 +50,9 @@ const HARNESS_HTML = (variant) => `<!doctype html>
 <div data-tool="read" data-variant="read" data-state="ok" class="row"><span>读取 · </span><button class="WXmFEW_fileLink chip" type="button">C:\\outside\\report.md</button></div>
 <div data-tool="read" data-variant="read" data-state="ok" class="row"><span>读取 · </span><button class="WXmFEW_fileLink chip" type="button">https://example.com/page.md</button></div>
 <p>正文段落，<code><button class="_fileMention_177e0_288 chip" title="D:\\proj\\README.md">README.md</button></code> 是内联文件引用。</p>
+<p>正文链接：<a id="webLink" href="https://example.com/docs/page?q=1">https://example.com/docs/page?q=1</a> 与
+<a id="mailLink" href="mailto:someone@example.com">mailto:someone@example.com</a> 以及
+<a id="relLink" href="/relative/page">相对链接</a>。</p>
 <p id="plain">这是一个普通段落，右键应当保留原生菜单。</p>
 <button id="plainButton" title="D:\\proj\\not-a-chip.txt">白名单之外的普通按钮</button>
 <div id="root"></div>
@@ -78,6 +82,7 @@ window.__PRIMITIVES__ = (function () {
   IconDownloadOutline16: stubIcon('download'),
   IconLinkOutline16: stubIcon('link'),
   IconCopyOutline16: stubIcon('copy'),
+  IconGlobeOutline14: stubIcon('globe'),
   Menu: function Menu(props) {
     window.__LAST_MENU_PROPS__ = props;
     window.__LAST_MENU_ITEMS__ = props.items;
@@ -160,6 +165,7 @@ const server = createServer(async (req, res) => {
     if (route === '/') {
       const variant = url.searchParams.get('menu') === 'primitives' ? 'primitives' : 'fallback'
       currentMissing = url.searchParams.get('missing') ?? 'idea'
+      noBrowser = url.searchParams.get('nobrowser') === '1'
       return send(200, 'text/html; charset=utf-8', HARNESS_HTML(variant))
     }
     if (route === '/client.js') return send(200, 'text/javascript; charset=utf-8', await readFile(join(SOURCE_DIR, 'lib', 'client.js'), 'utf8'))
@@ -185,8 +191,13 @@ const server = createServer(async (req, res) => {
       if (name === 'reveal') seen.reveal.push(parsed)
       else if (name === 'open-with') seen.openWith.push(parsed)
       else if (name === 'text') seen.text.push(parsed)
+      else if (name === 'webview') seen.webview.push(parsed)
+      else if (name === 'open-external') seen.openExternal.push(parsed)
       if (name === 'text') return send(200, 'application/json', JSON.stringify({ ok: true, text: '文件内容示例' }))
       if (name === 'open-with' && parsed.appId === 'idea') return send(409, 'application/json', JSON.stringify({ ok: false, error: 'app-unavailable' }))
+      // 内置网页视图：默认返回 builtin，用 ?nobrowser=1 模拟宿主没有内置浏览器（退回外部浏览器）
+      if (name === 'webview') return send(200, 'application/json', JSON.stringify({ ok: true, browser: noBrowser ? 'edge' : 'builtin', url: parsed.url }))
+      if (name === 'open-external') return send(200, 'application/json', JSON.stringify({ ok: true, browser: 'edge', url: parsed.url }))
       return send(200, 'application/json', JSON.stringify({ ok: true, path: parsed.path }))
     }
     return send(404, 'text/plain; charset=utf-8', 'not found')
@@ -242,6 +253,14 @@ const clickStub = (page, id) => page.evaluate((itemId) => {
   return true
 }, id)
 const closeMenu = (page) => page.evaluate(() => { document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) })
+/** 自绘菜单的条目没有 data-item-id，按可见文案点。 */
+const clickFallback = (page, label) => page.evaluate((text) => {
+  const rows = Array.from(document.querySelectorAll('.dfow-nav .dfow-item'))
+  const button = rows.find((row) => row.textContent.includes(text))
+  if (button === undefined) return false
+  button.click()
+  return true
+}, label)
 
 await mkdir(SHOTS, { recursive: true })
 await new Promise((resolve) => server.listen(PORT, '127.0.0.1', resolve))
@@ -392,6 +411,65 @@ try {
   check('工具行 URL 文本不被当作路径（放行原生右键）',
     urlResult.prevented === false && (await menuText(page)) === null, JSON.stringify(urlResult))
 
+  // ---------- 网页链接菜单（自绘变体：只验行为，图标在 primitives 变体里验） ----------
+  await page.goto(`${ORIGIN}/?menu=fallback`, { waitUntil: 'load' })
+  await waitTick(page)
+  const appsBefore = seen.apps
+  const linkHit = await contextMenuOn(page, '#webLink')
+  await waitTick(page)
+  check('网页链接右键被接管', linkHit.prevented === true, JSON.stringify(linkHit))
+  check('链接菜单是三项：打开网页 / 在外部浏览器中打开 / 复制链接',
+    JSON.stringify(await menuText(page)) === JSON.stringify(['打开网页', '在外部浏览器中打开', '复制链接']),
+    JSON.stringify(await menuText(page)))
+  check('链接菜单不请求应用列表（/apps 次数不变）', seen.apps === appsBefore, `apps=${seen.apps}`)
+
+  await clickFallback(page, '复制链接')
+  await waitTick(page)
+  check('「复制链接」把链接写进剪贴板',
+    (await page.evaluate(() => navigator.clipboard.readText())) === 'https://example.com/docs/page?q=1',
+    await page.evaluate(() => navigator.clipboard.readText()))
+  check('复制后给出中文提示', (await page.evaluate(() => document.querySelector('.dfow-notice')?.textContent ?? '')) === '已复制链接')
+
+  await contextMenuOn(page, '#webLink')
+  await waitTick(page)
+  await clickFallback(page, '打开网页')
+  await waitTick(page)
+  check('「打开网页」调 /webview 且载荷是绝对 URL',
+    seen.webview.length === 1 && seen.webview[0].url === 'https://example.com/docs/page?q=1',
+    JSON.stringify(seen.webview))
+  check('内置视图打开时提示「已在网页中打开」',
+    (await page.evaluate(() => document.querySelector('.dfow-notice')?.textContent ?? '')) === '已在网页中打开')
+
+  await contextMenuOn(page, '#webLink')
+  await waitTick(page)
+  await clickFallback(page, '在外部浏览器中打开')
+  await waitTick(page)
+  check('「在外部浏览器中打开」调 /open-external 且载荷是绝对 URL',
+    seen.openExternal.length === 1 && seen.openExternal[0].url === 'https://example.com/docs/page?q=1',
+    JSON.stringify(seen.openExternal))
+  check('外部打开时提示「已用外部浏览器打开」',
+    (await page.evaluate(() => document.querySelector('.dfow-notice')?.textContent ?? '')) === '已用外部浏览器打开')
+
+  // 宿主没有内置浏览器时，「打开网页」要退回外部浏览器并换一句提示
+  await page.goto(`${ORIGIN}/?menu=fallback&nobrowser=1`, { waitUntil: 'load' })
+  await waitTick(page)
+  await contextMenuOn(page, '#webLink')
+  await waitTick(page)
+  await clickFallback(page, '打开网页')
+  await waitTick(page)
+  check('宿主没有内置浏览器时提示「已用外部浏览器打开」',
+    (await page.evaluate(() => document.querySelector('.dfow-notice')?.textContent ?? '')) === '已用外部浏览器打开',
+    JSON.stringify(seen.webview.at(-1)))
+
+  await page.goto(`${ORIGIN}/?menu=fallback`, { waitUntil: 'load' })
+  await waitTick(page)
+  const mailHit = await contextMenuOn(page, '#mailLink')
+  await waitTick(page)
+  check('mailto 链接不接管（放行原生右键）', mailHit.prevented === false && (await menuText(page)) === null, JSON.stringify(mailHit))
+  const relHit = await contextMenuOn(page, '#relLink')
+  await waitTick(page)
+  check('相对链接不接管（只认 http(s)）', relHit.prevented === false && (await menuText(page)) === null, JSON.stringify(relHit))
+
   // Escape 关闭
   await contextMenuOn(page, '[data-produced-files-row] button')
   await waitTick(page)
@@ -482,6 +560,28 @@ try {
   await waitTick(page2)
   const failureNotice = await page2.evaluate(() => document.querySelector('.dfow-notice')?.textContent ?? null)
   check('宿主 409 时提示「未找到该应用」', failureNotice === '未找到该应用', String(failureNotice))
+
+  // primitives 变体下的链接菜单：三项 + 图标（图标只在原语可用时才有）
+  await page2.goto(`${ORIGIN}/?menu=primitives`, { waitUntil: 'load' })
+  await waitTick(page2)
+  const linkProps = await page2.evaluate(() => {
+    const labels = Array.from(document.querySelectorAll('.stub-btn')).map((button) => button.textContent)
+    return { labels }
+  })
+  await contextMenuOn(page2, '#webLink')
+  await waitTick(page2)
+  const linkItems = await page2.evaluate(() => ({
+    labels: Array.from(document.querySelectorAll('.stub-btn')).map((button) => button.textContent),
+    ids: Array.from(document.querySelectorAll('.stub-item')).map((row) => row.getAttribute('data-item-id')),
+    icons: Array.from(document.querySelectorAll('.stub-btn .stub-icon')).map((svg) => svg.getAttribute('data-icon')),
+    submenus: document.querySelectorAll('.stub-sub').length,
+  }))
+  check('primitives 变体：链接菜单是三项且 id 正确',
+    JSON.stringify(linkItems.ids) === JSON.stringify(['openweb', 'openexternal', 'copyurl']),
+    JSON.stringify(linkItems.ids))
+  check('primitives 变体：链接菜单三项都带平台图标（globe / 外开 / 链接）',
+    JSON.stringify(linkItems.icons) === JSON.stringify(['globe', 'rightup', 'link']) && linkItems.submenus === 0,
+    `${JSON.stringify(linkItems.icons)} submenus=${linkItems.submenus} 之前=${JSON.stringify(linkProps.labels)}`)
 } finally {
   await browser.close()
   server.close()

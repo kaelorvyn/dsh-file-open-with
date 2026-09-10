@@ -211,6 +211,22 @@ check('reveal 的窗口是可见且未最小化的（windowsHide 必须为 false
   hit === undefined ? '没有对应窗口' : `visible=${hit.visible} minimized=${hit.minimized}`)
 await closeProbeWindows()
 
+// 8c) 网页动作：假 ctx 没有 browser 服务 → 「打开网页」必须退回外部浏览器；URL 协议白名单要拦住非 http(s)
+const badScheme = await post('/plugins/file-open-with/webview', { url: 'file:///C:/Windows/win.ini' })
+check('非 http(s) 链接被拒（file:）', badScheme.status === 400 && badScheme.data.error === 'bad-url', JSON.stringify(badScheme.data))
+const badJs = await post('/plugins/file-open-with/open-external', { url: 'javascript:alert(1)' })
+check('非 http(s) 链接被拒（javascript:）', badJs.status === 400 && badJs.data.error === 'bad-url', JSON.stringify(badJs.data))
+const noUrl = await post('/plugins/file-open-with/open-external', {})
+check('缺少 url 被拒', noUrl.status === 400 && noUrl.data.error === 'bad-url', JSON.stringify(noUrl.data))
+
+// 会真的开一个 Edge 标签页：证明「Edge 优先」这条路真的通（走的是同一个 launch）
+const external = await post('/plugins/file-open-with/open-external', { url: 'https://example.com/' })
+check('POST /open-external 真的用 Edge 打开（Edge 优先）',
+  external.status === 200 && external.data.browser === 'edge', JSON.stringify(external.data))
+const webFallback = await post('/plugins/file-open-with/webview', { url: 'https://example.com/' })
+check('没有内置浏览器时「打开网页」退回外部浏览器',
+  webFallback.status === 200 && webFallback.data.browser === 'edge', JSON.stringify(webFallback.data))
+
 // 9) 卸载清理
 check('apply 注册了前缀路由', routes.length === 1 && routes[0].kind === 'prefix' && routes[0].path === '/plugins/file-open-with',
   JSON.stringify(routes.map((route) => `${route.kind}:${route.path}`)))

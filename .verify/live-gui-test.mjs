@@ -75,6 +75,8 @@ const browser = await puppeteer.launch({
 })
 try {
   const page = await browser.newPage()
+  // 真实宿主的源是 http://127.0.0.1:3099 —— 读剪贴板要显式授权
+  await browser.defaultBrowserContext().overridePermissions(new URL(url).origin, ['clipboard-read', 'clipboard-write'])
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error.message)))
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 })
@@ -144,12 +146,27 @@ try {
     plain.id = 'dfow-plain'
     plain.textContent = '这是普通段落：右键应保留原生菜单'
     plain.style.cssText = 'position:fixed;left:60px;top:230px'
-    document.body.append(host, toolRow, plain)
+
+    // 正文里的网页链接（和官方 renderSafeLink 渲染出来的一样：a[href^=http]）
+    const linkParagraph = document.createElement('p')
+    linkParagraph.id = 'dfow-link-row'
+    linkParagraph.style.cssText = 'position:fixed;left:60px;top:270px;z-index:99999'
+    const link = document.createElement('a')
+    link.id = 'dfow-link'
+    link.href = 'http://127.0.0.1:3099/'
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.textContent = 'http://127.0.0.1:3099/'
+    linkParagraph.appendChild(link)
+
+    document.body.append(host, toolRow, plain, linkParagraph)
     const rect = chip.getBoundingClientRect()
     const toolRect = toolLink.getBoundingClientRect()
+    const linkRect = link.getBoundingClientRect()
     return {
       x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2),
       toolX: Math.round(toolRect.left + toolRect.width / 2), toolY: Math.round(toolRect.top + toolRect.height / 2),
+      linkX: Math.round(linkRect.left + linkRect.width / 2), linkY: Math.round(linkRect.top + linkRect.height / 2),
     }
   }, TARGET, TOOL_TARGET_TEXT)
 
@@ -245,11 +262,45 @@ try {
   const afterEscape = await page.evaluate(() => document.querySelectorAll('button[role="menuitem"]').length)
   check('Escape 关闭菜单', beforeEscape > 0 && afterEscape === 0, `${beforeEscape} → ${afterEscape}`)
 
+  // ---------- 网页链接：真实宿主上右键 → 三项菜单 → 真的打开 ----------
+  await page.mouse.click(anchor.linkX, anchor.linkY, { button: 'right' })
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 250)))
+  const linkLabels = await page.evaluate(() => Array.from(document.querySelectorAll('button[role="menuitem"]'))
+    .map((item) => item.querySelector('span:not([class*="itemIcon"])')?.textContent ?? item.textContent))
+  check('真实宿主上链接右键弹出三项菜单',
+    JSON.stringify(linkLabels) === JSON.stringify(['打开网页', '在外部浏览器中打开', '复制链接']), JSON.stringify(linkLabels))
+  const linkIcons = await page.evaluate(() => document.querySelectorAll('button[role="menuitem"] svg').length)
+  check('链接菜单三项都带平台图标（svg）', linkIcons === 3, `svg=${linkIcons}`)
+  await page.screenshot({ path: join(SHOTS, 'real-link-menu.png') })
+
+  const copyLink = await page.evaluate(async () => {
+    const item = Array.from(document.querySelectorAll('button[role="menuitem"]')).find((entry) => entry.textContent === '复制链接')
+    if (item === undefined) return { clicked: false }
+    item.click()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return { clicked: true, notice: document.querySelector('.dfow-notice')?.textContent ?? null, clipboard: await navigator.clipboard.readText() }
+  })
+  check('「复制链接」写入剪贴板并提示',
+    copyLink.clipboard === 'http://127.0.0.1:3099/' && copyLink.notice === '已复制链接', JSON.stringify(copyLink))
+
+  await page.mouse.click(anchor.linkX, anchor.linkY, { button: 'right' })
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 250)))
+  const openWeb = await page.evaluate(async () => {
+    const item = Array.from(document.querySelectorAll('button[role="menuitem"]')).find((entry) => entry.textContent === '打开网页')
+    if (item === undefined) return { clicked: false }
+    item.click()
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    return { clicked: true, notice: document.querySelector('.dfow-notice')?.textContent ?? null }
+  })
+  check('真实宿主上「打开网页」走内置网页视图（宿主装了 dsh-builtin-browser）',
+    openWeb.notice === '已在网页中打开', JSON.stringify(openWeb))
+
   check('全程无页面异常', errors.length === 0, errors.join(' | '))
   await page.evaluate(() => {
     document.getElementById('dfow-probe')?.remove()
     document.getElementById('dfow-tool-row')?.remove()
     document.getElementById('dfow-plain')?.remove()
+    document.getElementById('dfow-link-row')?.remove()
   })
 } finally {
   await browser.close()
