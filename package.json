@@ -1,0 +1,51 @@
+{
+  "name": "dsh-file-open-with",
+  "version": "1.0.0",
+  "description": "聊天里的文件右键菜单：打开文件（右侧侧边栏）/ 在资源管理器中打开 / 打开方式（Visual Studio·终端·IntelliJ IDEA）/ 另存为 / 复制路径 / 复制文件内容。Context menu for chat file chips with open-in-sidebar, reveal, open-with, save-as and copy actions.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    },
+    "compatibility": {
+      "dsh": ">=0.1.2-rc.1"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "react": "^18.2.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "context-menu",
+    "open-with",
+    "file"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

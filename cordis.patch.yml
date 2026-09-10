@@ -1,0 +1,9 @@
+# dsh-file-open-with bundle patch: one host row over the profile.
+#
+# 该行挂载宿主半部（lib/index.js），它在 /plugins/file-open-with 下注册前缀路由，
+# 提供 reveal / open-with / text / download 四个本机动作。
+# 浏览器半部（lib/client.js，右键菜单）由 package.json 的 dsh.client 声明发现
+# （exports["./client"]），无需额外的 patch 行。
+- insert:
+    - id: file-open-with
+      name: dsh-file-open-with
